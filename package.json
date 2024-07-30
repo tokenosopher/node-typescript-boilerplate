@@ -6,6 +6,10 @@
   "engines": {
     "node": ">= 20.9 < 21"
   },
+  "dependencies": {
+    "@upstash/vector": "^1.0.7",
+    "tslib": "~2.6"
+  },
   "devDependencies": {
     "@types/jest": "~29.5",
     "@types/node": "~20",
@@ -19,11 +23,13 @@
     "rimraf": "~5.0",
     "ts-api-utils": "~1.0",
     "ts-jest": "~29.1",
+    "tsx": "^4.7.3",
     "typescript": "~5.3"
   },
   "scripts": {
     "start": "node build/src/main.js",
     "clean": "rimraf coverage build tmp",
+    "prepare-and-run-syncCreatorCoachVectorData": "npm run build:release && node --env-file=.env build/src/main.js --syncCreatorCoachVectorData",
     "prebuild": "npm run lint",
     "build": "tsc -p tsconfig.json",
     "build:watch": "tsc -w -p tsconfig.json",
@@ -35,9 +41,6 @@
   },
   "author": "Jakub Synowiec <jsynowiec@users.noreply.github.com>",
   "license": "Apache-2.0",
-  "dependencies": {
-    "tslib": "~2.6"
-  },
   "volta": {
     "node": "20.10.0"
   }

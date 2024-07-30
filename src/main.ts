@@ -1,3 +1,5 @@
+
+
 /**
  * Some predefined delay values (in milliseconds).
  */
@@ -28,7 +30,14 @@ function delayedHello(
 // at https://eslint.org/docs/latest/user-guide/configuring/rules#disabling-rules
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-export async function greeter(name: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export async function greeter(name: string) {
+  // eslint-disable-line @typescript-eslint/no-explicit-any
   // The name parameter should be of type string. Any is used only to trigger the rule.
   return await delayedHello(name, Delays.Long);
 }
+
+delayedHello('World', Delays.Short).then((greeting: string) => {
+  console.log(greeting);
+});
+
+
