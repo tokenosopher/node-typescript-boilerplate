@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import fs from 'fs';
+import path from 'path';
 import NodeDreamMachineAPI from './NodeDreamMachineAPI.js';
 import OpenAI from 'openai';
 import fetch from 'node-fetch';
@@ -26,7 +27,6 @@ This is for a lifetime, I know
 `;
 
 const videoTime = 10;
-
 const numberOfStories = videoTime / 5;
 
 const prompt = `Create the prompts for a series of images inspired by these lyrics:
@@ -58,35 +58,55 @@ Please structure your response in json format, with the following structure:
 
 Create ${numberOfStories} stories in the storyboard.`;
 
-const downloadVideos = async ({ generationDir }: { generationDir: string }) => {
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const downloadVideos = async ({
+  generationDir,
+  videoIds,
+}: {
+  generationDir: string;
+  videoIds: string[];
+}) => {
+  console.log('Downloading videos...');
   try {
-    const refreshResult = await lumaDreamMachine.refresh({ limit: 1 });
-    console.log('Refresh result:', refreshResult);
+    const videosDir = path.join(generationDir, 'videos');
+    fs.mkdirSync(videosDir, { recursive: true });
 
-    const completedVideos = refreshResult.filter(
-      (item: any) => item.state === 'completed',
-    );
+    for (let i = 0; i < videoIds.length; i++) {
+      const refreshResult = await lumaDreamMachine.refresh({ limit: 100 });
+      const video = refreshResult.find(
+        (item: any) => item.id === videoIds[i] && item.state === 'completed',
+      );
 
-    for (const video of completedVideos) {
-      const videoId = video.id;
-      const downloadUrlObject =
-        await lumaDreamMachine.getVideoDownloadUrl(videoId);
+      if (video) {
+        const downloadUrlObject = await lumaDreamMachine.getVideoDownloadUrl(
+          videoIds[i],
+        );
 
-      if (typeof downloadUrlObject === 'object' && 'url' in downloadUrlObject) {
-        const downloadUrl = downloadUrlObject.url;
-        console.log('Download URL:', downloadUrl);
+        if (
+          typeof downloadUrlObject === 'object' &&
+          'url' in downloadUrlObject
+        ) {
+          const downloadUrl = downloadUrlObject.url;
+          console.log('Download URL:', downloadUrl);
 
-        const response = await fetch(downloadUrl);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          const response = await fetch(downloadUrl);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const videoBuffer = await response.arrayBuffer();
+
+          const videoFilePath = path.join(
+            videosDir,
+            `scene_${i + 1}_${videoIds[i]}.mp4`,
+          );
+          fs.writeFileSync(videoFilePath, Buffer.from(videoBuffer));
+          console.log(`Video ${videoIds[i]} downloaded to: ${videoFilePath}`);
+        } else {
+          console.error(`Invalid download URL format for video ${videoIds[i]}`);
         }
-        const videoBuffer = await response.arrayBuffer();
-
-        const videoFilePath = `${generationDir}/video_${videoId}.mp4`;
-        fs.writeFileSync(videoFilePath, Buffer.from(videoBuffer));
-        console.log(`Video ${videoId} downloaded to: ${videoFilePath}`);
       } else {
-        console.error(`Invalid download URL format for video ${videoId}`);
+        console.log(`Video ${videoIds[i]} not yet completed or not found.`);
       }
     }
   } catch (error) {
@@ -94,32 +114,37 @@ const downloadVideos = async ({ generationDir }: { generationDir: string }) => {
   }
 };
 
-// Poll for video completion
-const checkVideoStatus = async () => {
+const checkVideoStatus = async (videoIds: string[]) => {
+  console.log('Checking video status for videos:', { videoIds });
   try {
-    const refreshResult = await lumaDreamMachine.refresh();
-    console.log('Refresh result:', refreshResult);
+    const refreshResult = await lumaDreamMachine.refresh({
+      limit: 100,
+    });
 
-    // Check if all videos are completed
-    const allCompleted = refreshResult.every(
-      (item: any) => item.state === 'completed',
+    const allCompleted = videoIds.every((id) =>
+      refreshResult.some(
+        (item: any) => item.id === id && item.state === 'completed',
+      ),
     );
 
     if (allCompleted) {
       console.log('All videos are completed!');
-      // Here you can add logic to download or process the completed videos
+      return true;
     } else {
       console.log(
         'Some videos are still processing. Checking again in 30 seconds...',
       );
-      setTimeout(checkVideoStatus, 30000); // Check again after 30 seconds
+      await sleep(30000);
+      return checkVideoStatus(videoIds);
     }
   } catch (error) {
     console.error('Error checking video status:', error);
+    return false;
   }
 };
 
 const createAIVideo = async (): Promise<void> => {
+  console.log('Creating storyboard text...');
   const message = await anthropicClient.messages.create({
     max_tokens: 4096,
     messages: [{ role: 'user', content: prompt }],
@@ -128,47 +153,61 @@ const createAIVideo = async (): Promise<void> => {
 
   const currentDateAndTimeWithLines = new Date()
     .toLocaleString()
-    .replace(/:/g, '_')
-    .replace(/\//g, '_')
-    .replace(/ /g, '_')
-    .replace(/,/g, '_')
-    .replace(/:/g, '_')
-    .replace(/\\/g, '_');
+    .replace(/[/:]/g, '_')
+    .replace(/,/g, '')
+    .replace(/ /g, '_');
 
   const generationDir = `./generations/generation-${currentDateAndTimeWithLines}`;
-  fs.mkdirSync(generationDir, { recursive: true });
+  const imagesDir = path.join(generationDir, 'images');
+  fs.mkdirSync(imagesDir, { recursive: true });
 
   const messageContent = message?.content?.[0];
-
   if (messageContent.type !== 'text') return;
 
   const messageText = messageContent.text;
-
   const storyboard = JSON.parse(messageText).stories;
 
-  const textFilePath = `${generationDir}/generation-${currentDateAndTimeWithLines}.txt`;
+  const textFilePath = path.join(
+    generationDir,
+    `generation-${currentDateAndTimeWithLines}.txt`,
+  );
   fs.writeFileSync(textFilePath, messageText);
 
   const imageFilePaths: string[] = [];
+  const batchSize = 7;
+  const batchDelay = 70000; // 1 minute and 10 seconds
 
-  for (const [index, story] of storyboard.entries()) {
-    const dallePrompt = story.story;
-    const imageResponse = await openAIClient.images.generate({
-      prompt: dallePrompt,
-      n: 1,
-      size: '1792x1024',
-      model: 'dall-e-3',
+  console.log('Creating storyboard images...');
+  for (let i = 0; i < storyboard.length; i += batchSize) {
+    const batch = storyboard.slice(i, i + batchSize);
+    const batchPromises = batch.map(async (story, index) => {
+      const dallePrompt = story.story;
+      const imageResponse = await openAIClient.images.generate({
+        prompt: dallePrompt,
+        n: 1,
+        size: '1792x1024',
+        model: 'dall-e-3',
+      });
+
+      const imageUrl = imageResponse.data[0].url;
+      const imageBuffer = await (await fetch(imageUrl)).arrayBuffer();
+
+      const imageFilePath = path.join(imagesDir, `story_${i + index + 1}.png`);
+      fs.writeFileSync(imageFilePath, Buffer.from(imageBuffer));
+      imageFilePaths.push(imageFilePath);
     });
 
-    const imageUrl = imageResponse.data[0].url;
-    const imageBuffer = await (await fetch(imageUrl)).arrayBuffer();
+    await Promise.all(batchPromises);
 
-    const imageFilePath = `${generationDir}/story_${index + 1}.png`;
-    fs.writeFileSync(imageFilePath, Buffer.from(imageBuffer));
-    imageFilePaths.push(imageFilePath);
+    if (i + batchSize < storyboard.length) {
+      console.log(`Waiting ${batchDelay / 1000} seconds before next batch...`);
+      await sleep(batchDelay);
+    }
   }
 
-  // Create videos using LumaDreamMachine
+  const videoIds: string[] = [];
+
+  console.log('Creating videos...');
   for (let i = 0; i < imageFilePaths.length - 1; i++) {
     const startImagePath = imageFilePaths[i];
     const endImagePath = imageFilePaths[i + 1];
@@ -181,27 +220,35 @@ const createAIVideo = async (): Promise<void> => {
         imgEndFile: endImagePath,
         aspectRatio: '16:9',
       });
+
       console.log(`Video ${i + 1} creation started:`, result);
+      videoIds.push(result[0].id);
     } catch (error) {
-      console.error(`Error creating video ${i + 1}:`, error.data.detail);
+      console.error(
+        `Error creating video ${i + 1}:`,
+        error.data?.detail || error,
+      );
     }
   }
 
-  // Start checking video status
-  checkVideoStatus();
+  // Wait for all videos to complete
+  const allCompleted = await checkVideoStatus(videoIds);
 
-  // Start downloading the completed videos
-  downloadVideos({
-    generationDir,
-  });
+  if (allCompleted) {
+    console.log('Downloading videos...');
+    await downloadVideos({
+      generationDir,
+      videoIds,
+    });
+  }
 };
 
 const main = async (): Promise<void> => {
   await createAIVideo();
+  // await checkVideoStatus([
+  //   '100ca924-e6d4-4eb3-bed4-8cf034e1e5be',
+  //   '738027d5-727c-4657-9775-2109b3e2d2a5',
+  // ]);
 };
 
-downloadVideos({
-  generationDir: './generations/generation-15_08_2024__02_30_01',
-});
-
-// await lumaDreamMachine.refresh();
+main();
