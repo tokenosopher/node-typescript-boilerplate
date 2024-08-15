@@ -4,10 +4,15 @@
   "description": "Minimalistic boilerplate to quick-start Node.js development in TypeScript.",
   "type": "module",
   "engines": {
-    "node": ">= 20.9 < 21"
+    "node": ">=22"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.25.0",
     "@upstash/vector": "^1.0.7",
+    "axios": "^1.7.4",
+    "form-data": "^4.0.0",
+    "openai": "^4.55.7",
+    "pdf-text-reader": "^5.1.0",
     "tslib": "~2.6"
   },
   "devDependencies": {
@@ -30,6 +35,7 @@
     "start": "node build/src/main.js",
     "clean": "rimraf coverage build tmp",
     "prepare-and-run-syncCreatorCoachVectorData": "npm run build:release && node --env-file=.env build/src/main.js --syncCreatorCoachVectorData",
+    "create-ai-video": "node --env-file=.env build/src/create-ai-video/createAIVideo.js",
     "prebuild": "npm run lint",
     "build": "tsc -p tsconfig.json",
     "build:watch": "tsc -w -p tsconfig.json",
